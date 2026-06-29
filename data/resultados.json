@@ -1,0 +1,12 @@
+{
+  "_instrucoes": "FALLBACK MANUAL. master.campeao/artilheiro nulos ate a Copa acabar; grupos vazio (Nabuco so tem mata-mata).",
+  "config": {
+    "pagantes": 10
+  },
+  "atualizado_em": "29/06/2026",
+  "master": {
+    "campeao": null,
+    "artilheiro": null
+  },
+  "grupos": {}
+}
