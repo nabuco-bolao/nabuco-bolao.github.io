@@ -137,6 +137,35 @@ function indicePares() {
       (fase.jogos || []).forEach(j => { idx[[norm(j.casa), norm(j.fora)].sort().join('|')] = { tipo: 'mata', fase: fk, id: String(j.id), casaNorm: norm(j.casa) }; });
   return idx;
 }
+const SUMMARY_URL = (id) => `https://site.api.espn.com/apis/site/v2/sports/soccer/fifa.world/summary?event=${id}`;
+// detecta se o jogo passou do tempo normal (prorrogação ou pênaltis)
+function passouDoTempoNormal(e) {
+  const tp = (e.status && e.status.type) || {};
+  const det = ((tp.detail || '') + ' ' + (tp.shortDetail || '')).toUpperCase();
+  const per = (e.status && e.status.period) || 0;
+  return per > 2 || /\bAET\b|\bET\b|PEN/.test(det);
+}
+// soma os 2 primeiros períodos (1º + 2º tempo) do summary da ESPN = placar do tempo regulamentar
+async function regulacaoScore(eventId) {
+  estado.regCache = estado.regCache || {};
+  if (estado.regCache[eventId]) return estado.regCache[eventId];
+  try {
+    const r = await fetch(SUMMARY_URL(eventId), { cache: 'no-store' });
+    if (!r.ok) return null;
+    const s = await r.json();
+    const regP = (((s.format || {}).regulation) || {}).periods || 2;
+    const comp = s.header && s.header.competitions && s.header.competitions[0];
+    if (!comp) return null;
+    const out = {};
+    for (const c of comp.competitors) {
+      const ls = c.linescores || [];
+      if (ls.length < regP) return null; // ainda não fechou o 2º tempo
+      out[c.homeAway] = ls.slice(0, regP).reduce((a, x) => a + Number(x.displayValue != null ? x.displayValue : (x.value || 0)), 0);
+    }
+    if (out.home != null && out.away != null) { estado.regCache[eventId] = out; return out; }
+  } catch (e) {}
+  return null;
+}
 async function aplicarAoVivo() {
   let dados;
   try { const r = await fetch(ESPN_URL, { cache: 'no-store' }); if (!r.ok) return false; dados = await r.json(); }
@@ -168,10 +197,22 @@ async function aplicarAoVivo() {
       const h = get('home'), a = get('away'), dr = get('draw');
       if (h && a) estado.odds[refKey] = { casa: casaEhHome ? h : a, fora: casaEhHome ? a : h, empate: dr, prov: (oo.provider || {}).name || 'casa' };
     }
-    if (tp.state === 'in') estado.aoVivo[refKey] = { gc, gf, det: tp.shortDetail || 'ao vivo' };
-    if (tp.state !== 'post') continue;
-    if (ref.tipo === 'grupo') { estado.resultados.grupos[ref.chave] = Object.assign(estado.resultados.grupos[ref.chave] || {}, { gc, gf }); }
-    else { const fase = estado.matamata.fases[ref.fase]; fase.resultados = fase.resultados || {}; const a = fase.resultados[ref.id]; if (!a || !a.manual) fase.resultados[ref.id] = { gc, gf }; }
+    // mata-mata que passou dos 90' (prorrogação/pênaltis): pontua SÓ o tempo regulamentar, travando na hora
+    const mataPastReg = ref.tipo === 'mata' && passouDoTempoNormal(e);
+    let RGC = gc, RGF = gf, encerrado = (tp.state === 'post');
+    if (mataPastReg) {
+      const rs = await regulacaoScore(e.id);
+      if (rs && rs.home != null && rs.away != null) {
+        RGC = casaEhHome ? rs.home : rs.away; RGF = casaEhHome ? rs.away : rs.home; encerrado = true;
+      } else { encerrado = false; } // sem o placar do tempo normal ainda: não pontua (evita contar prorrogação)
+    }
+    if (tp.state === 'in') {
+      if (mataPastReg && encerrado) estado.aoVivo[refKey] = { gc: RGC, gf: RGF, det: 'prorrogação · vale o tempo normal' };
+      else if (!encerrado) estado.aoVivo[refKey] = { gc, gf, det: tp.shortDetail || 'ao vivo' };
+    }
+    if (!encerrado) continue;
+    if (ref.tipo === 'grupo') { estado.resultados.grupos[ref.chave] = Object.assign(estado.resultados.grupos[ref.chave] || {}, { gc: RGC, gf: RGF }); }
+    else { const fase = estado.matamata.fases[ref.fase]; fase.resultados = fase.resultados || {}; const a = fase.resultados[ref.id]; if (!a || !a.manual) fase.resultados[ref.id] = { gc: RGC, gf: RGF }; }
   }
   return true;
 }
@@ -232,14 +273,14 @@ function contagem(getter, canon) {
 }
 
 // stats de um participante numa fase, podendo ignorar jogos de uma data (p/ variação do dia)
-function statsScope(p, scope, skipDate) {
+function statsScope(p, scope, incluiData) {
   const a = novoAcc();
   if (scope === 'consolidado' || scope === 'grupos')
-    estado.jogos.forEach((g, i) => { if (skipDate && g.data === skipDate) return; somar(a, pontos(p.p[i], estado.resultados.grupos[chaveJogo(g)], false), 5); });
+    estado.jogos.forEach((g, i) => { if (incluiData && !incluiData(g.data)) return; somar(a, pontos(p.p[i], estado.resultados.grupos[chaveJogo(g)], false), 5); });
   if (estado.matamata) for (const fk of ORDEM_MATA) {
     if (scope !== 'consolidado' && scope !== fk) continue;
     const fase = estado.matamata.fases[fk]; if (!fase || !(fase.jogos || []).length) continue;
-    fase.jogos.forEach(j => { if (skipDate && j.data === skipDate) return; const pal = (fase.palpites && fase.palpites[p.nome]) ? fase.palpites[p.nome][String(j.id)] : null; somar(a, pontos(pal, fase.resultados && fase.resultados[String(j.id)], true), 8); });
+    fase.jogos.forEach(j => { if (incluiData && !incluiData(j.data)) return; const pal = (fase.palpites && fase.palpites[p.nome]) ? fase.palpites[p.nome][String(j.id)] : null; somar(a, pontos(pal, fase.resultados && fase.resultados[String(j.id)], true), 8); });
   }
   if (scope === 'consolidado') {
     const m = estado.resultados.master || {}, campOK = m.campeao ? norm(m.campeao) : null;
@@ -249,8 +290,8 @@ function statsScope(p, scope, skipDate) {
   }
   return a;
 }
-function posicoesScope(scope, skipDate) {
-  const arr = estado.palpites.map(p => ({ nome: p.nome, ...statsScope(p, scope, skipDate) }))
+function posicoesScope(scope, incluiData) {
+  const arr = estado.palpites.map(p => ({ nome: p.nome, ...statsScope(p, scope, incluiData) }))
     .sort((a, b) => b.pts - a.pts || b.exatos - a.exatos || a.zeros - b.zeros || a.nome.localeCompare(b.nome, 'pt-BR'));
   const pos = {}; arr.forEach((x, i) => pos[x.nome] = i + 1); return pos;
 }
@@ -269,8 +310,8 @@ function abrirJogo(j) {
   const semPalpite = estado.palpites.length - arr.reduce((s, g) => s + g.n, 0);
   let ex = 0, ac = 0, er = 0; arr.forEach(g => { if (g.pt == null) return; if (g.pt === exato) ex += g.n; else if (g.pt > 0) ac += g.n; else er += g.n; });
 
-  const placar = res ? `${res.gc} <span class="muted">x</span> ${res.gf}` : vivo ? `${vivo.gc} <span class="muted">x</span> ${vivo.gf}` : '<span class="muted">a definir</span>';
-  const status = res ? '<span class="badge fim">encerrado</span>' : vivo ? `<span class="badge" style="color:var(--acc2)">🔴 ${esc(vivo.det)}</span>` : `<span class="badge">${esc(j.hora || j.data)}</span>`;
+  const placar = vivo ? `${vivo.gc} <span class="muted">x</span> ${vivo.gf}` : res ? `${res.gc} <span class="muted">x</span> ${res.gf}` : '<span class="muted">a definir</span>';
+  const status = vivo ? `<span class="badge" style="color:var(--acc2)">🔴 ${esc(vivo.det)}</span>` : res ? '<span class="badge fim">encerrado</span>' : `<span class="badge">${esc(j.hora || j.data)}</span>`;
 
   const corpo = arr.map(g => {
     const cls = g.pt == null ? '' : 'pt' + g.pt;
@@ -314,8 +355,8 @@ function blocoJogos(lista) {
     dia.jogos.forEach(j => {
       const res = resultadoDe(j), vivo = aoVivoDe(j);
       let placar, pcls = 'placar', badge;
-      if (res) { placar = `${res.gc} <span class="muted">x</span> ${res.gf}`; badge = `<span class="badge fim">encerrado</span>`; }
-      else if (vivo) { placar = `${vivo.gc} <span class="muted">x</span> ${vivo.gf}`; pcls += ' vivo'; badge = `<span class="badge" style="color:var(--acc2)">🔴 ${esc(vivo.det)}</span>`; }
+      if (vivo) { placar = `${vivo.gc} <span class="muted">x</span> ${vivo.gf}`; pcls += ' vivo'; badge = `<span class="badge" style="color:var(--acc2)">🔴 ${esc(vivo.det)}</span>`; }
+      else if (res) { placar = `${res.gc} <span class="muted">x</span> ${res.gf}`; badge = `<span class="badge fim">encerrado</span>`; }
       else { placar = '–'; pcls += ' aberto'; badge = `<span class="badge">${esc(j.hora || 'a definir')}</span>`; }
       const item = el(`<div class="jogo-item clicavel">
         <div class="jogo">
@@ -334,10 +375,10 @@ function blocoJogos(lista) {
 }
 
 /* pontos que cada participante fez HOJE (jogos com data de hoje já encerrados) */
-function pontosHoje() {
-  const hoje = hojeBR(), m = {};
+function pontosDoDia(dia) {
+  const m = {};
   todosJogos().forEach(j => {
-    if (j.data !== hoje) return; const res = resultadoDe(j); if (!res) return;
+    if (j.data !== dia) return; const res = resultadoDe(j); if (!res) return;
     estado.palpites.forEach(p => { const pt = pontos(palpiteDe(p.nome, j), res, j.mata); if (pt != null) m[p.nome] = (m[p.nome] || 0) + pt; });
   });
   return m;
@@ -348,9 +389,13 @@ const dataKey = (d) => { const [dd, mm] = d.split('/').map(Number); return mm * 
 const DIASEM = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
 function dataObj(d) { const [dd, mm] = d.split('/').map(Number); return new Date(2026, mm - 1, dd); }
 function rotuloData(d) {
-  const hoje = hojeBR(); const amanha = (() => { const x = dataObj(hoje); x.setDate(x.getDate() + 1); return `${String(x.getDate()).padStart(2,'0')}/${String(x.getMonth()+1).padStart(2,'0')}`; })();
+  const fmt = (x) => `${String(x.getDate()).padStart(2,'0')}/${String(x.getMonth()+1).padStart(2,'0')}`;
+  const hoje = hojeBR();
+  const amanha = (() => { const x = dataObj(hoje); x.setDate(x.getDate() + 1); return fmt(x); })();
+  const ontem = (() => { const x = dataObj(hoje); x.setDate(x.getDate() - 1); return fmt(x); })();
   if (d === hoje) return `Hoje · ${d}`;
   if (d === amanha) return `Amanhã · ${d}`;
+  if (d === ontem) return `Ontem · ${d}`;
   return `${DIASEM[dataObj(d).getDay()]} · ${d}`;
 }
 
@@ -417,9 +462,9 @@ function render() {
 function renderHoje(c) {
   const todos = todosJogos(), hoje = hojeBR();
   const datas = [...new Set(todos.map(j => j.data))].filter(Boolean).sort((a, b) => dataKey(a) - dataKey(b));
-  let futuras = datas.filter(d => dataKey(d) >= dataKey(hoje));
+  let futuras = datas.slice();
   if (!futuras.length) futuras = [hoje];
-  if (!estado.sel.dia || !futuras.includes(estado.sel.dia)) estado.sel.dia = futuras.includes(hoje) ? hoje : futuras[0];
+  if (!estado.sel.dia || !futuras.includes(estado.sel.dia)) estado.sel.dia = futuras.includes(hoje) ? hoje : (futuras.filter(d => dataKey(d) <= dataKey(hoje)).pop() || futuras[0]);
   const opts = futuras.map(d => `<option value="${d}" ${d === estado.sel.dia ? 'selected' : ''}>${rotuloData(d)}</option>`).join('');
   c.appendChild(el(`<div class="card" style="padding:12px 14px"><div class="row2"><div>
     <label class="small muted">Ver jogos de</label><select id="selDia">${opts}</select></div></div></div>`));
@@ -432,8 +477,8 @@ function renderHoje(c) {
     lista.forEach(j => {
       const res = resultadoDe(j), vivo = aoVivoDe(j);
       let placar, pcls = 'placar', badge;
-      if (res) { placar = `${res.gc} <span class="muted">x</span> ${res.gf}`; badge = `<span class="badge fim">encerrado</span>`; }
-      else if (vivo) { placar = `${vivo.gc} <span class="muted">x</span> ${vivo.gf}`; pcls += ' vivo'; badge = `<span class="badge" style="color:var(--acc2)">🔴 ${esc(vivo.det)}</span>`; }
+      if (vivo) { placar = `${vivo.gc} <span class="muted">x</span> ${vivo.gf}`; pcls += ' vivo'; badge = `<span class="badge" style="color:var(--acc2)">🔴 ${esc(vivo.det)}</span>`; }
+      else if (res) { placar = `${res.gc} <span class="muted">x</span> ${res.gf}`; badge = `<span class="badge fim">encerrado</span>`; }
       else { placar = '–'; pcls += ' aberto'; badge = `<span class="badge">${esc(j.hora || 'a definir')}</span>`; }
       const top = topPalpite(j);
       const maisP = top ? `<div class="mais-palpitado">🔮 Placar mais palpitado: <b>${top.pa} x ${top.pb}</b> <span class="muted">· ${top.n} de ${top.tot}</span></div>` : '';
@@ -514,22 +559,34 @@ function renderRanking(c) {
   const ativas = fasesAtivas();
   const opts = [`<option value="consolidado">Consolidado (todas as fases)</option>`]
     .concat(ativas.map(f => `<option value="${f.key}">${FASE_LABEL[f.key]}</option>`)).join('');
-  c.appendChild(el(`<div class="card" style="padding:12px 14px"><div class="row2"><div>
-    <label class="small muted">Ver pontuação de</label>
-    <select id="scope">${opts}</select></div></div></div>`));
+  c.appendChild(el(`<div class="card" style="padding:12px 14px"><div class="row2">
+    <div><label class="small muted">Ver pontuação de</label>
+    <select id="scope">${opts}</select></div>
+    <div><label class="small muted">Coluna "Dia" — ver dia</label>
+    <select id="diaRank"></select></div></div></div>`));
   const box = el(`<div id="boxRank"></div>`); c.appendChild(box);
   const sel = $('#scope'); sel.value = estado.sel.scope;
+  const selDia = $('#diaRank');
   if (![...sel.options].some(o => o.value === estado.sel.scope)) { estado.sel.scope = 'consolidado'; sel.value = 'consolidado'; }
 
   const desenhar = () => {
     const scope = sel.value; estado.sel.scope = scope; box.innerHTML = '';
     const r = rankingDe(scope);
-    const hojePts = pontosHoje();
-    const posAntes = posicoesScope(scope, hojeBR());
     const resolvidos = todosJogos().filter(j => resultadoDe(j) && (scope === 'consolidado' || j.faseKey === scope))
       .sort((a, b) => (dataKey(a.data) - dataKey(b.data)) || ((a.hora || '').localeCompare(b.hora || '')));
     const ult5 = resolvidos.slice(-5);
     const totJogos = resolvidos.length;
+    // coluna "Dia": seletor com os dias que já tiveram resultado nesse escopo
+    let diasResolvidos = [...new Set(resolvidos.map(j => j.data))].sort((a, b) => dataKey(a) - dataKey(b));
+    if (!diasResolvidos.length) diasResolvidos = [hojeBR()];
+    const escolhido = selDia.value || estado.sel.diaRank;
+    estado.sel.diaRank = (escolhido && diasResolvidos.includes(escolhido)) ? escolhido : diasResolvidos[diasResolvidos.length - 1];
+    selDia.innerHTML = diasResolvidos.map(d => `<option value="${d}" ${d === estado.sel.diaRank ? 'selected' : ''}>${rotuloData(d)}</option>`).join('');
+    const diaSel = estado.sel.diaRank;
+    const diaPts = pontosDoDia(diaSel);
+    const temAntes = resolvidos.some(j => dataKey(j.data) < dataKey(diaSel));
+    const posDepois = posicoesScope(scope, d => dataKey(d) <= dataKey(diaSel));
+    const posAntes = temAntes ? posicoesScope(scope, d => dataKey(d) < dataKey(diaSel)) : null;
     const lider = r.find(x => x.pts > 0) || r[0];
     const scopeLabel = scope === 'consolidado' ? 'todas as fases' : FASE_LABEL[scope];
     box.appendChild(el(`<div class="resumo-dia">
@@ -547,9 +604,11 @@ function renderRanking(c) {
     const tb = tbl.querySelector('tbody');
     r.forEach((x, i) => {
       const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : '';
-      const posNow = i + 1, mov = (posAntes[x.nome] || posNow) - posNow;
-      const movHtml = mov > 0 ? `<span class="mov up">▲${mov}</span>` : mov < 0 ? `<span class="mov down">▼${-mov}</span>` : `<span class="mov eq">=</span>`;
-      const hp = hojePts[x.nome] || 0;
+      const posNow = i + 1;
+      const pD = posDepois[x.nome] || posNow, pA = posAntes ? (posAntes[x.nome] || pD) : pD;
+      const mov = pA - pD;
+      const movHtml = !temAntes ? `<span class="mov eq">·</span>` : mov > 0 ? `<span class="mov up">▲${mov}</span>` : mov < 0 ? `<span class="mov down">▼${-mov}</span>` : `<span class="mov eq">=</span>`;
+      const hp = diaPts[x.nome] || 0;
       const dots = ult5.map(g => { const pt = pontos(palpiteDe(x.nome, g), resultadoDe(g), g.mata); const cls = pt == null ? 'd-na' : pt === 5 ? 'd-ex' : pt > 0 ? 'd-ac' : 'd-er'; return `<i class="dot ${cls}" title="${esc(g.casa)} x ${esc(g.fora)}"></i>`; }).join('');
       tb.appendChild(el(`<tr class="${i < 3 ? 'top' + (i + 1) : ''}">
         <td class="pos">${posNow}</td>
@@ -560,9 +619,9 @@ function renderRanking(c) {
         <td class="forma">${dots || '<span class="muted small">—</span>'}</td></tr>`));
     });
     card.querySelector('.rank-scroll').appendChild(tbl); box.appendChild(card);
-    box.appendChild(el(`<div class="small muted" style="padding:6px">Dia = variação de posição hoje (+pts ganhos) · Exa = placar exato · Ven = só o vencedor · Zero = sem pontos · Últimos 5: 🟢 exato 🟡 vencedor 🔴 erro</div>`));
+    box.appendChild(el(`<div class="small muted" style="padding:6px">Dia = variação de posição no dia selecionado (+pts ganhos no dia) · Exa = placar exato · Ven = só o vencedor · Zero = sem pontos · Últimos 5: 🟢 exato 🟡 vencedor 🔴 erro</div>`));
   };
-  sel.addEventListener('change', desenhar); desenhar();
+  sel.addEventListener('change', desenhar); selDia.addEventListener('change', desenhar); desenhar();
 }
 
 function renderJogos(c) {
