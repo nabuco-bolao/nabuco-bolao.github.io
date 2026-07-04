@@ -197,8 +197,9 @@ async function aplicarAoVivo() {
       const h = get('home'), a = get('away'), dr = get('draw');
       if (h && a) estado.odds[refKey] = { casa: casaEhHome ? h : a, fora: casaEhHome ? a : h, empate: dr, prov: (oo.provider || {}).name || 'casa' };
     }
-    // mata-mata que passou dos 90' (prorrogação/pênaltis): pontua SÓ o tempo regulamentar, travando na hora
-    const mataPastReg = ref.tipo === 'mata' && passouDoTempoNormal(e);
+    // REGRA POR FASE: 16-avos = só tempo regulamentar (90'); oitavas em diante = placar final (120', prorrogação conta, só pênaltis fora).
+    // Como o "score" da ESPN já é o placar ao fim da prorrogação (antes dos pênaltis), das oitavas pra frente basta usar gc/gf direto.
+    const mataPastReg = ref.tipo === 'mata' && ref.fase === '16avos' && passouDoTempoNormal(e);
     let RGC = gc, RGF = gf, encerrado = (tp.state === 'post');
     if (mataPastReg) {
       const rs = await regulacaoScore(e.id);
@@ -753,9 +754,10 @@ function renderRegras(c) {
             <tr><td>Errou o resultado</td><td class="cnum verm">0</td></tr>
           </tbody>
         </table>
-        <div class="callout alerta">⚠️ Vale apenas o placar dos <b>90 minutos + acréscimos</b>. Prorrogação e pênaltis <b>não contam</b>, mesmo que definam quem se classifica.</div>
+        <div class="callout alerta">⚠️ <b>16-avos:</b> vale o placar dos <b>90 minutos + acréscimos</b> (prorrogação e pênaltis não contam). <b>Das oitavas em diante:</b> vale o placar até o <b>fim do jogo (120 min, com a prorrogação)</b> — <b>só os pênaltis</b> ficam de fora.</div>
         <div class="reg-ex">
-          <div><b>Exemplo</b> — palpite Brasil 2×1: real 2×1 (90') = <span class="verde">5</span>; real 3×1 p/ Brasil = <span class="ouro">2</span>; 1×1 e Brasil passa nos pênaltis = vale o 1×1 = <span class="verm">0</span>.</div>
+          <div><b>Ex. 16-avos</b> — palpite Brasil 2×1: real 2×1 (90') = <span class="verde">5</span>; 1×1 e Brasil passa nos pênaltis = vale o 1×1 = <span class="verm">0</span>.</div>
+          <div><b>Ex. oitavas+</b> — palpite Brasil 3×2: real 2×2 no tempo normal e 3×2 na prorrogação = vale o <b>3×2</b> = <span class="verde">5</span>; se for aos pênaltis, vale o 2×2 dos 120'.</div>
         </div>
       </div>
     </div>
