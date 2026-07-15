@@ -1413,10 +1413,121 @@
       "resultados": {}
     },
     "semis": {
-      "aberta": false,
-      "jogos": [],
-      "palpites": {},
-      "resultados": {}
+      "aberta": true,
+      "jogos": [
+        {
+          "id": 101,
+          "data": "14/07",
+          "hora": "16:00",
+          "casa": "França",
+          "fora": "Espanha"
+        },
+        {
+          "id": 102,
+          "data": "15/07",
+          "hora": "16:00",
+          "casa": "Inglaterra",
+          "fora": "Argentina"
+        }
+      ],
+      "palpites": {
+        "Glins": {
+          "101": [
+            3,
+            1
+          ],
+          "102": [
+            2,
+            1
+          ]
+        },
+        "João Carlos (Pik)": {
+          "101": [
+            1,
+            1
+          ],
+          "102": [
+            2,
+            1
+          ]
+        },
+        "Dudu": {
+          "101": [
+            2,
+            1
+          ],
+          "102": [
+            1,
+            1
+          ]
+        },
+        "Matheus Argentino": {
+          "101": [
+            2,
+            1
+          ],
+          "102": [
+            2,
+            1
+          ]
+        },
+        "Picanço": {
+          "101": [
+            2,
+            3
+          ],
+          "102": [
+            1,
+            1
+          ]
+        },
+        "Theo Ribeiro": {
+          "101": [
+            1,
+            1
+          ],
+          "102": [
+            2,
+            0
+          ]
+        },
+        "Victor Meira": {
+          "101": [
+            2,
+            0
+          ],
+          "102": [
+            3,
+            1
+          ]
+        },
+        "Cotta": {
+          "101": [
+            1,
+            2
+          ],
+          "102": [
+            2,
+            1
+          ]
+        },
+        "Marcelo GG": {
+          "101": [
+            1,
+            2
+          ],
+          "102": [
+            1,
+            1
+          ]
+        }
+      },
+      "resultados": {
+        "101": {
+          "gc": 0,
+          "gf": 2
+        }
+      }
     },
     "terceiro": {
       "aberta": false,

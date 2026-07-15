@@ -10,7 +10,7 @@ const estado = { jogos: [], palpites: [], resultados: { grupos: {}, master: {} }
   tabela: [], aba: 'hoje', aoVivo: {}, parResultado: {}, odds: {},
   sel: { p: null, a: null, b: null, scope: 'consolidado', dia: null } };
 
-const ESPN_URL = 'https://site.api.espn.com/apis/site/v2/sports/soccer/fifa.world/scoreboard?dates=20260611-20260719';
+const ESPN_URL = 'https://site.api.espn.com/apis/site/v2/sports/soccer/fifa.world/scoreboard?dates=20260611-20260719&limit=1000';
 const INTERVALO = 60000;
 
 const FASE_LABEL = { grupos: 'Fase de grupos', '32avos': '32-avos de final', '16avos': '16-avos de final',
